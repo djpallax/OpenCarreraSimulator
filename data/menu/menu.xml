@@ -1,0 +1,6 @@
+<!-- OSC/data/menu/menu.xml -->
+<menu>
+    <option name="Play" action="playGame"/>
+    <option name="Options" action="showOptions"/>
+    <option name="Quit" action="quitGame"/>
+</menu>
