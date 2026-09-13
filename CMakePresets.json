@@ -1,0 +1,74 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "gcc-debug",
+      "inherits": "base",
+      "displayName": "GCC Debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "clang-debug",
+      "inherits": "base",
+      "displayName": "Clang Debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "gcc-release",
+      "inherits": "base",
+      "displayName": "GCC Release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "g++",
+        "OCS_BUILD_TESTS": "OFF"
+      }
+    },
+    {
+      "name": "gcc-asan",
+      "inherits": "gcc-debug",
+      "displayName": "GCC Debug + ASan/UBSan",
+      "cacheVariables": {
+        "OCS_ENABLE_ASAN": "ON",
+        "OCS_ENABLE_UBSAN": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "gcc-debug", "configurePreset": "gcc-debug" },
+    { "name": "clang-debug", "configurePreset": "clang-debug" },
+    { "name": "gcc-release", "configurePreset": "gcc-release" },
+    { "name": "gcc-asan", "configurePreset": "gcc-asan" }
+  ],
+  "testPresets": [
+    {
+      "name": "gcc-debug",
+      "configurePreset": "gcc-debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "gcc-asan",
+      "configurePreset": "gcc-asan",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

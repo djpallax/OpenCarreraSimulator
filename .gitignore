@@ -1,0 +1,18 @@
+/build/
+/.cache/
+/.idea/
+/.vscode/
+compile_commands.json
+*.user
+*.swp
+
+# Local milestone backups
+.step*_backup_*/
+
+# Build outputs
+build/
+
+# Crash dumps
+core
+core.*
+*.core

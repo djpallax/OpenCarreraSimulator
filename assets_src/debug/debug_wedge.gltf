@@ -1,0 +1,81 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "OpenCarreraSimulator Step 4 sample"
+  },
+  "buffers": [
+    {
+      "uri": "debug_wedge.bin",
+      "byteLength": 168
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 96,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 96,
+      "byteLength": 72,
+      "target": 34963
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 8,
+      "type": "VEC3",
+      "min": [
+        -0.9,
+        0.0,
+        -1.6
+      ],
+      "max": [
+        0.9,
+        0.65,
+        1.6
+      ]
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 0,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "DebugWedge",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0
+          },
+          "indices": 1,
+          "mode": 4
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "DebugWedgeNode",
+      "mesh": 0
+    }
+  ],
+  "scenes": [
+    {
+      "name": "DebugScene",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "scene": 0
+}
