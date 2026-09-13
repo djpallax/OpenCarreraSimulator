@@ -68,7 +68,9 @@ The current Lab GT uses four raycast spring/damper suspensions, RWD, persistent
 wheel angular state and a first load-limited longitudinal tire model. Throttle
 and braking now act through wheel torque and longitudinal slip (`kappa`) rather
 than direct chassis forces; airborne driven wheels can spin but cannot propel the
-vehicle. The temporary bicycle yaw/lateral helper remains until lateral tire
-forces are implemented.
+vehicle. Static track collision is now accelerated by a BVH, so suspension rays
+and chassis contacts query only nearby triangles instead of scanning the entire
+mesh every 2 ms. The temporary bicycle yaw/lateral helper remains until lateral
+tire forces are implemented.
 
 See `STEP9.md` for the vehicle substep history and current tire/suspension values.

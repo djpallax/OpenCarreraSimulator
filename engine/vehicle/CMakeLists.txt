@@ -1,5 +1,6 @@
 add_library(ocs_vehicle STATIC
     src/vehicle.cpp
+    src/vehicle_definition.cpp
 )
 
 add_library(ocs::vehicle ALIAS ocs_vehicle)

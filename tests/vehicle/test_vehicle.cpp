@@ -1,6 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <fstream>
+
 #include "ocs/vehicle/vehicle.hpp"
+#include "ocs/vehicle/vehicle_definition.hpp"
 
 namespace {
 
@@ -271,4 +275,54 @@ TEST(Vehicle, BrakeTorqueOpposesForwardWheelRotation) {
         EXPECT_LT(omega, 20.0);
         EXPECT_GE(omega, 0.0);
     }
+}
+
+
+TEST(VehicleDefinition, MissingConfigFileUsesEngineDefaults) {
+    const std::filesystem::path directory =
+        std::filesystem::temp_directory_path() / "ocs_vehicle_definition_missing_cfg";
+    std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory);
+
+    const auto definition = ocs::vehicle::load_vehicle_definition(directory);
+    EXPECT_FALSE(definition.config_file_found);
+    EXPECT_DOUBLE_EQ(definition.mass_kg, 1200.0);
+    EXPECT_DOUBLE_EQ(definition.dynamics.maximum_brake_torque_nm_per_wheel, 1200.0);
+    EXPECT_NEAR(definition.dynamics.maximum_steer_angle_radians, 0.42, 1.0e-12);
+    EXPECT_EQ(definition.body_model_path(), directory / "body.ocsmodel");
+    EXPECT_EQ(definition.wheel_model_path(), directory / "wheel.ocsmodel");
+
+    std::filesystem::remove_all(directory);
+}
+
+TEST(VehicleDefinition, PartialConfigOverridesOnlyPresentAttributes) {
+    const std::filesystem::path directory =
+        std::filesystem::temp_directory_path() / "ocs_vehicle_definition_partial_cfg";
+    std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory);
+    {
+        std::ofstream output(directory / "vehicle.cfg");
+        output << "name = Test Car\n"
+               << "mass_kg = 1337\n"
+               << "maximum_brake_torque_nm_per_wheel = 1900\n"
+               << "maximum_steer_angle_degrees = 30\n"
+               << "spring_rate_n_m = 42000\n"
+               << "unknown_future_key = 123\n";
+    }
+
+    const auto definition = ocs::vehicle::load_vehicle_definition(directory);
+    EXPECT_TRUE(definition.config_file_found);
+    EXPECT_EQ(definition.name, "Test Car");
+    EXPECT_DOUBLE_EQ(definition.mass_kg, 1337.0);
+    EXPECT_DOUBLE_EQ(definition.dynamics.maximum_brake_torque_nm_per_wheel, 1900.0);
+    EXPECT_NEAR(definition.dynamics.maximum_steer_angle_radians,
+                3.14159265358979323846 / 6.0, 1.0e-12);
+    EXPECT_DOUBLE_EQ(definition.dynamics.wheels[0].spring_rate, 42000.0);
+    EXPECT_DOUBLE_EQ(definition.dynamics.wheels[3].spring_rate, 42000.0);
+    // Omitted values retain engine defaults.
+    EXPECT_DOUBLE_EQ(definition.dynamics.maximum_drive_torque_nm, 2200.0);
+    EXPECT_DOUBLE_EQ(definition.dynamics.wheels[0].damper_rate, 4500.0);
+    EXPECT_EQ(definition.applied_attribute_count, 5U);
+
+    std::filesystem::remove_all(directory);
 }

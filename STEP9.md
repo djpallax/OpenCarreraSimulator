@@ -387,3 +387,72 @@ Five longitudinal-wheel regressions are added, bringing the expected suite to
 - an airborne driven wheel spins without propelling the chassis;
 - positive driven-wheel slip applies forward contact force;
 - brake torque opposes forward wheel rotation.
+
+
+## Step 9.6 — Static collision BVH ✅
+
+A real converted circuit exposed the intended scalability limit of the original
+Step 8 static-mesh solver: a **712,372 triangle** collision mesh reduced the
+500 Hz physics thread to roughly **10 Hz**, with an individual physics step taking
+about **257 ms**. Rendering remained near 60 FPS, confirming that the bottleneck
+was the brute-force collision queries rather than Vulkan or the scheduler.
+
+`PhysicsWorld` now builds a binary AABB BVH whenever `set_static_triangles()`
+replaces the static collision world. Leaves contain at most eight triangle
+references and retain the original source-triangle index used by raycast hits.
+The runtime collision format is unchanged; the acceleration structure is derived
+from the loaded triangles for now.
+
+The BVH accelerates both hot paths:
+
+- suspension/wheel `raycast_static()` traverses ray-vs-AABB nodes and tests only
+  triangles in intersected leaves;
+- chassis OBB contact uses a conservative local AABB around each transformed box
+  corner and traverses only overlapping BVH nodes before running the existing
+  signed-plane / point-in-triangle narrow phase.
+
+Collision response, one-sided winding rules, restitution and friction semantics
+are unchanged. The brute-force narrow-phase tests remain the reference behaviour;
+only candidate discovery changed.
+
+### Diagnostics
+
+`PhysicsStepStats` now reports:
+
+- static BVH node count;
+- BVH node visits per physics tick (including suspension queries from the step
+  callback);
+- actual triangle narrow-phase tests.
+
+The debug telemetry and CSV metrics expose these values as `bvhNodes`,
+`bvhVisits` and `triTests` so large-circuit regressions are visible immediately.
+
+### Stress validation
+
+A synthetic **720,000 triangle** tiled circuit was used as a local stress case.
+On the development environment used to build this patch:
+
+- BVH construction: ~0.48 s;
+- 4,000 downward raycasts: ~6.1 ms total (~1.5 us/query);
+- raycast narrow-phase tests: ~11 triangles/query on average instead of 720,000;
+- one OBB contact step: ~0.17 ms and ~9,500 triangle tests instead of millions;
+- 1,000 consecutive 500 Hz-style ticks with four suspension rays plus chassis contact: ~73 us/tick average on the same environment.
+
+Exact numbers are machine-dependent; the important regression gate is that query
+cost scales with nearby geometry rather than total circuit triangle count.
+
+## 9.6.1 — Vehicle profiles + imported-track collision stabilization ✅
+
+Vehicle-specific assets and current tuning values now live together in a vehicle
+folder. The default OCS Lab GT source profile is `assets_src/vehicle/ocs_lab_gt/`
+and the build mirrors it into `build/.../assets/vehicle/ocs_lab_gt/`. `vehicle.cfg`
+is optional and supports partial definitions: omitted/malformed/unknown keys retain
+engine defaults. `--vehicle-dir` selects a complete runtime profile; legacy
+`--asset` and `--wheel` overrides remain available.
+
+The static chassis solver was also hardened for dense converted circuits. Large
+position projections are replaced by a time-based depenetration budget, implausibly
+deep overlaps are rejected, upright road contacts only use lower chassis corners,
+and restitution is suppressed for upright floor-like contacts. This specifically
+prevents small imported details or overlapping scenery shells from producing the
+old bounce/teleport feedback loop while preserving wall/rollover collision.

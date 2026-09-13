@@ -104,6 +104,7 @@ The architecture remains ready for this gate, but runtime validation is more val
 - Step 9.3.2: suspension regression tolerances corrected to match float-authored geometry precision.
 - Step 9.4: persistent per-wheel angular velocity/rotation and rotational inertia.
 - Step 9.5: first load-limited longitudinal slip-ratio tire force; throttle/braking now act through wheel torque and tire contact instead of direct chassis force.
+- Step 9.6: static collision BVH accelerates suspension raycasts and chassis-vs-track neighborhood queries so full-size circuit meshes no longer require brute-force triangle scans.
 - Wheel/contact model.
 - Basic suspension. ✅ spring/damper raycast prototype complete; geometry/anti-roll refinement remains.
 - Basic tire forces: ✅ longitudinal slip/load coupling; slip angle and combined-slip path remain.

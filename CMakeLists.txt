@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(OpenCarreraSimulator
-    VERSION 0.9.3
+    VERSION 0.9.4
     DESCRIPTION "Linux-first, cross-platform racing simulator engine"
     LANGUAGES CXX
 )

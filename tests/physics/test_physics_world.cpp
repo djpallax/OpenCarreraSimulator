@@ -282,3 +282,113 @@ TEST(PhysicsWorld, StaticRaycastHitsAuthoredFrontFace) {
     const auto backface = world.raycast_static({0.0, 0.0, -1.0}, {0.0, 0.0, 1.0}, 3.0);
     EXPECT_FALSE(backface.has_value());
 }
+
+namespace {
+
+std::vector<ocs::physics::StaticTriangle> tiled_floor(const int cells_x, const int cells_y) {
+    std::vector<ocs::physics::StaticTriangle> triangles;
+    triangles.reserve(static_cast<std::size_t>(cells_x * cells_y * 2));
+    for (int y = 0; y < cells_y; ++y) {
+        for (int x = 0; x < cells_x; ++x) {
+            const double x0 = static_cast<double>(x);
+            const double x1 = static_cast<double>(x + 1);
+            const double y0 = static_cast<double>(y);
+            const double y1 = static_cast<double>(y + 1);
+            triangles.push_back({{x0, y0, 0.0}, {x1, y0, 0.0}, {x1, y1, 0.0}});
+            triangles.push_back({{x0, y0, 0.0}, {x1, y1, 0.0}, {x0, y1, 0.0}});
+        }
+    }
+    return triangles;
+}
+
+} // namespace
+
+TEST(PhysicsWorld, StaticBvhRaycastPrunesLargeTriangleSet) {
+    ocs::physics::PhysicsWorld world;
+    world.set_static_triangles(tiled_floor(128, 128));
+    ASSERT_EQ(world.static_triangle_count(), 32768U);
+    EXPECT_GT(world.static_bvh_node_count(), 1U);
+
+    const auto hit = world.raycast_static({63.25, 71.75, 4.0}, {0.0, 0.0, -1.0}, 10.0);
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_NEAR(hit->distance, 4.0, 1.0e-9);
+    EXPECT_NEAR(hit->normal.z, 1.0, 1.0e-9);
+
+    // Fold the const ray-query counters into a published step snapshot.
+    world.step(0.001);
+    const auto& stats = world.last_step_stats();
+    EXPECT_GT(stats.bvh_node_visits, 0U);
+    EXPECT_LT(stats.triangle_tests, 256U);
+}
+
+TEST(PhysicsWorld, StaticBvhBroadphasePrunesBoxContacts) {
+    ocs::physics::PhysicsWorld world;
+    world.set_gravity({});
+    world.set_static_triangles(tiled_floor(128, 128));
+    auto desc = dynamic_box();
+    desc.state.position = {64.5, 64.5, 0.40};
+    const auto handle = world.create_body(desc);
+
+    world.step(0.001);
+    const auto* body = world.get(handle);
+    ASSERT_NE(body, nullptr);
+    EXPECT_GT(body->contact_count, 0U);
+    EXPECT_LT(world.last_step_stats().triangle_tests, 5000U);
+}
+
+TEST(PhysicsWorld, StaticBvhRaycastPreservesOriginalTriangleIndex) {
+    ocs::physics::PhysicsWorld world;
+    world.set_static_triangles({
+        // Degenerate source triangle is discarded from the BVH.
+        {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}},
+        {{-2.0, -2.0, 0.0}, {2.0, -2.0, 0.0}, {0.0, 2.0, 0.0}}
+    });
+
+    const auto hit = world.raycast_static({0.0, 0.0, 2.0}, {0.0, 0.0, -1.0}, 4.0);
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(hit->triangle_index, 1U);
+}
+
+TEST(PhysicsWorld, DeepPreexistingStaticOverlapDoesNotTeleportBody) {
+    ocs::physics::PhysicsWorld world;
+    world.set_gravity({});
+    world.set_static_triangles(flat_floor());
+    auto desc = dynamic_box();
+    desc.state.position = {0.0, 0.0, 0.0}; // lower corners start 0.5 m below floor
+    desc.static_contact_max_penetration = 0.35;
+    desc.static_contact_persistence_depth = 0.08;
+    desc.upright_ground_contact_max_penetration = 0.12;
+    desc.maximum_depenetration_speed = 3.0;
+    const auto handle = world.create_body(desc);
+
+    world.step(0.002);
+    const auto* body = world.get(handle);
+    ASSERT_NE(body, nullptr);
+    // Imported scenery can contain overlapping decorative shells. A body already
+    // deeply behind one at tick start must not be projected half a metre away.
+    EXPECT_NEAR(body->current.position.z, 0.0, 1.0e-9);
+    EXPECT_EQ(body->contact_count, 0U);
+}
+
+TEST(PhysicsWorld, SweptImpactDepenetrationIsSpeedLimited) {
+    ocs::physics::PhysicsWorld world;
+    world.set_gravity({});
+    world.set_static_triangles(flat_floor());
+    auto desc = dynamic_box();
+    desc.state.position = {0.0, 0.0, 0.51};
+    desc.state.linear_velocity = {0.0, 0.0, -100.0};
+    desc.static_contact_max_penetration = 0.35;
+    desc.static_contact_persistence_depth = 0.35;
+    desc.upright_ground_contact_max_penetration = 0.25;
+    desc.maximum_depenetration_speed = 3.0;
+    const auto handle = world.create_body(desc);
+
+    world.step(0.002);
+    const auto* body = world.get(handle);
+    ASSERT_NE(body, nullptr);
+    EXPECT_GT(body->contact_count, 0U);
+    // Integration reaches z=0.31. Positional correction is capped to 3 m/s *
+    // 0.002 s = 0.006 m for the entire tick, rather than teleporting near z=0.5.
+    EXPECT_GE(body->current.position.z, 0.31);
+    EXPECT_LE(body->current.position.z, 0.316001);
+}

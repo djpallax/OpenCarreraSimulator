@@ -16,3 +16,9 @@ build/
 core
 core.*
 *.core
+
+/.tools/
+
+/kn5_import/
+
+.kn5_tool_backup_*/

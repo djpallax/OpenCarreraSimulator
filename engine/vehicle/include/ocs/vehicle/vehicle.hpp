@@ -64,6 +64,10 @@ struct VehicleConfig {
     // vehicle-specific avoids burying handling behaviour in the app layer.
     double maximum_steer_angle_radians = 0.42;
     double provisional_max_lateral_acceleration = 8.5;
+    double provisional_lateral_response = 7.5;
+    double provisional_yaw_rate_response = 7.0;
+    double provisional_max_yaw_acceleration = 2.5;
+    double speed_boost_multiplier = 1.6;
 };
 
 struct WheelContactState {
