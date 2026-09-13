@@ -48,7 +48,7 @@ See [`STEP7.md`](STEP7.md) and [`ROADMAP.md`](ROADMAP.md).
 Step 8 uses a 500 Hz default fixed-step physics laboratory (`--physics-hz 1000` tests a 1 ms step).
 The current default world is the Blender-authored `test_circuit.glb`, compiled independently to visual `.ocsmodel` and static-collision `.ocsmesh` resources. The laboratory rigid body uses an OBB, real corner contact impulses and can settle naturally from a tilted landing.
 
-`C` cycles CAMERA -> OBJECT -> DRIVE. DRIVE uses `W` throttle, `S` brake and `A/D` steering as a temporary force-based laboratory controller; wheel/suspension/tire physics remains Step 9 work.
+`C` cycles CAMERA -> OBJECT -> DRIVE. DRIVE uses `W` throttle, `S` brake and `A/D` steering. Propulsion is RWD and contact-gated per rear wheel. Four independent raycast suspensions now carry the chassis with spring/damper forces; steering/lateral response remains a temporary laboratory helper until the tire model replaces it.
 
 When `--metrics` (or `--metrics-file`) is enabled, a second software-rendered SDL telemetry window opens with renderer, physics, collision, drive, camera and per-object state.
 
@@ -61,3 +61,14 @@ See `STEP8.md` for the detailed substep checklist and completion gate.
 
 ### Physics execution mode
 Dedicated physics is the default. Use `--dedicated-physics` to force it explicitly. `--single-thread-physics` is retained only for A/B diagnostics and can affect frame pacing because all fixed steps run on the render/main thread.
+
+## Step 9 vehicle prototype
+
+The current Lab GT uses four raycast spring/damper suspensions, RWD, persistent
+wheel angular state and a first load-limited longitudinal tire model. Throttle
+and braking now act through wheel torque and longitudinal slip (`kappa`) rather
+than direct chassis forces; airborne driven wheels can spin but cannot propel the
+vehicle. The temporary bicycle yaw/lateral helper remains until lateral tire
+forces are implemented.
+
+See `STEP9.md` for the vehicle substep history and current tire/suspension values.

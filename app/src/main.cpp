@@ -1,4 +1,6 @@
 #include <algorithm>
+#include <atomic>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -26,6 +28,7 @@
 #include "ocs/platform/platform.hpp"
 #include "ocs/platform/window.hpp"
 #include "ocs/render/renderer.hpp"
+#include "ocs/vehicle/vehicle.hpp"
 #include "ocs/world/world.hpp"
 
 #ifndef OCS_DEFAULT_ASSET_PATH
@@ -44,12 +47,17 @@
 #define OCS_TEST_CIRCUIT_COLLISION_PATH ""
 #endif
 
+#ifndef OCS_VEHICLE_WHEEL_PATH
+#define OCS_VEHICLE_WHEEL_PATH ""
+#endif
+
 namespace {
 
 struct AppConfig {
     ocs::render::RendererConfig renderer{};
     std::filesystem::path track_path = OCS_TEST_CIRCUIT_PATH;
     std::filesystem::path track_collision_path = OCS_TEST_CIRCUIT_COLLISION_PATH;
+    std::filesystem::path wheel_path = OCS_VEHICLE_WHEEL_PATH;
     bool log_stats = false;
     std::optional<std::filesystem::path> metrics_file{};
     double physics_hz = 500.0;
@@ -89,10 +97,30 @@ struct DriveFrameTelemetry {
     float steering = 0.0F;
     double longitudinal_speed_mps = 0.0;
     double lateral_speed_mps = 0.0;
-    double applied_drive_force_n = 0.0;
-    double applied_brake_force_n = 0.0;
+    double applied_longitudinal_tire_force_n = 0.0;
+    double applied_drive_torque_nm = 0.0;
+    double applied_brake_torque_nm = 0.0;
+    double applied_suspension_force_n = 0.0;
+    double target_yaw_rate_rps = 0.0;
+    double current_yaw_rate_rps = 0.0;
     float applied_steer_torque_nm = 0.0F;
+    ocs::vehicle::DriveLayout drive_layout = ocs::vehicle::DriveLayout::rear_wheel_drive;
+    ocs::vehicle::VehicleContactState wheel_contacts{};
 };
+
+[[nodiscard]] constexpr const char* drive_layout_name(const ocs::vehicle::DriveLayout layout) noexcept {
+    switch (layout) {
+    case ocs::vehicle::DriveLayout::front_wheel_drive: return "FWD";
+    case ocs::vehicle::DriveLayout::rear_wheel_drive: return "RWD";
+    case ocs::vehicle::DriveLayout::all_wheel_drive: return "AWD";
+    }
+    return "UNKNOWN";
+}
+
+[[nodiscard]] constexpr const char* wheel_name(const std::size_t index) noexcept {
+    constexpr std::array<const char*, 4> names{"FL", "FR", "RL", "RR"};
+    return index < names.size() ? names[index] : "?";
+}
 
 class DriveTelemetryMailbox {
 public:
@@ -351,6 +379,8 @@ AppConfig parse_config(const int argc, char** argv) {
             config.track_path = argv[++index];
         } else if (argument == "--track-collision" && index + 1 < argc) {
             config.track_collision_path = argv[++index];
+        } else if (argument == "--wheel" && index + 1 < argc) {
+            config.wheel_path = argv[++index];
         } else if (argument == "--physics-hz" && index + 1 < argc) {
             try {
                 config.physics_hz = std::clamp(std::stod(argv[++index]), 100.0, 2000.0);
@@ -563,6 +593,73 @@ void update_camera(FreeCamera& camera,
                                   ocs::math::radians(89.0F));
     }
 }
+
+
+struct ChaseCameraState {
+    bool initialized = false;
+    ocs::math::Vec3d position{};
+    ocs::math::Vec3d target{};
+};
+
+[[nodiscard]] ocs::math::Vec3d lerp_vec3d(const ocs::math::Vec3d a,
+                                           const ocs::math::Vec3d b,
+                                           const double alpha) noexcept {
+    return a + (b - a) * alpha;
+}
+
+void update_drive_chase_camera(FreeCamera& camera,
+                               ChaseCameraState& chase,
+                               const ocs::physics::RigidBodyState& body,
+                               const double delta_seconds) noexcept {
+    using ocs::math::Vec3d;
+
+    Vec3d forward = Vec3d::from_vec3f(body.orientation.rotate({1.0F, 0.0F, 0.0F}));
+    forward.z = 0.0;
+    if (forward.length_squared() < 1.0e-8) {
+        forward = {1.0, 0.0, 0.0};
+    } else {
+        forward = forward.normalized();
+    }
+
+    constexpr Vec3d kWorldUp{0.0, 0.0, 1.0};
+    constexpr double kDistanceBehind = 7.5;
+    constexpr double kHeight = 3.0;
+    constexpr double kLookAhead = 3.2;
+    constexpr double kLookHeight = 0.65;
+    constexpr double kVelocityLeadSeconds = 0.08;
+
+    const Vec3d desired_position =
+        body.position - forward * kDistanceBehind + kWorldUp * kHeight;
+    const Vec3d desired_target =
+        body.position + forward * kLookAhead + kWorldUp * kLookHeight +
+        body.linear_velocity * kVelocityLeadSeconds;
+
+    if (!chase.initialized) {
+        chase.initialized = true;
+        chase.position = desired_position;
+        chase.target = desired_target;
+    } else {
+        const double dt = std::clamp(delta_seconds, 0.0, 0.1);
+        const double position_alpha = 1.0 - std::exp(-8.0 * dt);
+        const double target_alpha = 1.0 - std::exp(-12.0 * dt);
+        chase.position = lerp_vec3d(chase.position, desired_position, position_alpha);
+        chase.target = lerp_vec3d(chase.target, desired_target, target_alpha);
+    }
+
+    camera.position = to_world_position(chase.position);
+    const Vec3d look = chase.target - chase.position;
+    const double look_length = look.length();
+    if (look_length > 1.0e-8) {
+        const Vec3d direction = look / look_length;
+        camera.yaw = static_cast<float>(std::atan2(direction.y, direction.x));
+        camera.pitch = static_cast<float>(std::asin(std::clamp(direction.z, -1.0, 1.0)));
+    }
+}
+
+struct VisualWheelRig {
+    static constexpr float maximum_steer_radians = 0.42F;
+    std::array<ocs::world::ObjectHandle, 4> objects{};
+};
 
 bool compute_physics_object_pose(const ocs::physics::RigidBody& body,
                                  const ocs::platform::PlatformEvents& input,
@@ -781,6 +878,8 @@ struct TrackSpawn {
 
 void apply_drive_lab_control(ocs::physics::PhysicsWorld& physics,
                              const ocs::physics::RigidBodyHandle handle,
+                             const ocs::vehicle::VehicleConfig& vehicle,
+                             ocs::vehicle::VehicleRuntimeState& vehicle_runtime,
                              const ocs::physics::PhysicsThreadInput& input,
                              const double fixed_dt_seconds,
                              DriveFrameTelemetry& telemetry) noexcept {
@@ -795,64 +894,99 @@ void apply_drive_lab_control(ocs::physics::PhysicsWorld& physics,
         body->current.orientation.rotate({0.0F, 1.0F, 0.0F})).normalized();
     const ocs::math::Vec3d body_up = ocs::math::Vec3d::from_vec3f(
         body->current.orientation.rotate({0.0F, 0.0F, 1.0F})).normalized();
-    const ocs::math::Vec3d steer_axis = body->grounded ? body->support_normal : body_up;
+    const ocs::vehicle::VehicleContactState& wheel_contacts = vehicle_runtime.contacts;
+    const ocs::math::Vec3d steer_axis = wheel_contacts.wheels_in_contact > 0U
+        ? wheel_contacts.average_contact_normal
+        : body_up;
 
     const double longitudinal_speed = body->current.linear_velocity.dot(forward);
     const double lateral_speed = body->current.linear_velocity.dot(left);
-    const float throttle = input.move_forward ? 1.0F : 0.0F;
-    const float brake = input.move_backward ? 1.0F : 0.0F;
-    const float steering = (input.move_left ? 1.0F : 0.0F) - (input.move_right ? 1.0F : 0.0F);
-    const double boost = input.speed_boost ? 1.6 : 1.0;
+    const float throttle = input.drive_enabled && input.move_forward ? 1.0F : 0.0F;
+    const float brake = input.drive_enabled && input.move_backward ? 1.0F : 0.0F;
+    const float steering = input.drive_enabled
+        ? (input.move_left ? 1.0F : 0.0F) - (input.move_right ? 1.0F : 0.0F)
+        : 0.0F;
+    const double boost = input.drive_enabled && input.speed_boost ? 1.6 : 1.0;
 
-    constexpr double kDriveAcceleration = 9.0;
-    constexpr double kBrakeAcceleration = 14.0;
-    constexpr double kLateralResponse = 5.5;
-    constexpr double kMaximumLateralAcceleration = 8.0;
-    constexpr float kSteerAngularAcceleration = 1.35F;
+    constexpr double kLateralResponse = 7.5;
+    constexpr double kMaximumLateralAcceleration = 8.5;
+    constexpr double kYawRateResponse = 7.0;
+    constexpr double kMaximumYawAcceleration = 2.5;
 
-    double drive_force = 0.0;
-    if (throttle > 0.0F) {
-        drive_force = body->mass.mass * kDriveAcceleration * boost * static_cast<double>(throttle);
-        physics.add_force(handle, forward * drive_force);
+    // Step 9.4/9.5: throttle and braking now act on wheel rotational inertia.
+    // Longitudinal chassis force exists only as a tire reaction to wheel slip at
+    // a real contact patch; an airborne driven wheel can spin but cannot propel.
+    const ocs::vehicle::LongitudinalTireResult tire_result =
+        ocs::vehicle::update_longitudinal_tire_dynamics(
+            physics, handle, *body, vehicle, vehicle_runtime,
+            static_cast<double>(throttle), static_cast<double>(brake), boost,
+            static_cast<double>(steering), fixed_dt_seconds);
+
+    // Temporary lateral grip helper until tire slip-angle forces arrive. Scale it
+    // by wheel contact count so one remaining wheel cannot magically provide the
+    // full-car lateral authority.
+    if (input.drive_enabled && wheel_contacts.wheels_in_contact > 0U) {
+        const double contact_factor =
+            static_cast<double>(wheel_contacts.wheels_in_contact) /
+            static_cast<double>(ocs::vehicle::kWheelCount);
+        const double lateral_acceleration = std::clamp(
+            -lateral_speed * kLateralResponse,
+            -kMaximumLateralAcceleration,
+            kMaximumLateralAcceleration) * contact_factor;
+        physics.add_force(handle, left * (body->mass.mass * lateral_acceleration));
     }
 
-    double brake_force = 0.0;
-    if (brake > 0.0F && std::abs(longitudinal_speed) > 1.0e-4) {
-        const double desired_acceleration = std::clamp(
-            -longitudinal_speed / fixed_dt_seconds,
-            -kBrakeAcceleration,
-            kBrakeAcceleration);
-        brake_force = body->mass.mass * desired_acceleration * static_cast<double>(brake);
-        physics.add_force(handle, forward * brake_force);
+    std::uint32_t steerable_contacts = 0U;
+    std::uint32_t steerable_wheels = 0U;
+    for (const auto& wheel : wheel_contacts.wheels) {
+        if (wheel.steerable) {
+            ++steerable_wheels;
+            if (wheel.in_contact) {
+                ++steerable_contacts;
+            }
+        }
     }
 
-    // This is deliberately a laboratory directional stabilizer, not a tire model.
-    // It converts body-sideways velocity into a bounded restoring force so yaw
-    // steering changes the trajectory instead of merely rotating a sliding box.
-    const double lateral_acceleration = std::clamp(
-        -lateral_speed * kLateralResponse,
-        -kMaximumLateralAcceleration,
-        kMaximumLateralAcceleration);
-    physics.add_force(handle, left * (body->mass.mass * lateral_acceleration));
-
+    // Step 9.3.1 handling hotfix: track a physically meaningful yaw-rate target
+    // instead of continuously adding yaw torque. Bicycle geometry makes target yaw
+    // proportional to longitudinal speed, so the vehicle cannot rotate in place.
+    // The controller also remains active with centred steering, damping residual yaw
+    // rather than letting the chassis keep spinning as if it were on ice.
+    double target_yaw_rate = 0.0;
+    const double current_yaw_rate = ocs::math::Vec3d::from_vec3f(
+        body->current.angular_velocity).dot(steer_axis);
     float steer_torque = 0.0F;
-    if (std::abs(steering) > 0.0F) {
-        const double speed_factor = std::clamp(std::abs(longitudinal_speed) / 6.0, 0.15, 1.0);
+    if (input.drive_enabled && steerable_contacts > 0U) {
+        const double contact_factor = steerable_wheels > 0U
+            ? static_cast<double>(steerable_contacts) / static_cast<double>(steerable_wheels)
+            : 0.0;
+        target_yaw_rate = ocs::vehicle::provisional_steering_yaw_rate(
+            vehicle, longitudinal_speed, static_cast<double>(steering)) * contact_factor;
+        const double desired_yaw_acceleration = std::clamp(
+            (target_yaw_rate - current_yaw_rate) * kYawRateResponse,
+            -kMaximumYawAcceleration,
+            kMaximumYawAcceleration);
         const float yaw_inertia = std::max(body->mass.inertia_diagonal.z, 1.0F);
-        steer_torque = steering * kSteerAngularAcceleration * yaw_inertia *
-            static_cast<float>(speed_factor * boost);
+        steer_torque = static_cast<float>(desired_yaw_acceleration) * yaw_inertia;
         physics.add_torque(handle, (steer_axis * static_cast<double>(steer_torque)).to_vec3f());
     }
 
+    const double suspension_force = telemetry.applied_suspension_force_n;
     telemetry = {
         .throttle = throttle,
         .brake = brake,
         .steering = steering,
         .longitudinal_speed_mps = longitudinal_speed,
         .lateral_speed_mps = lateral_speed,
-        .applied_drive_force_n = drive_force,
-        .applied_brake_force_n = brake_force,
-        .applied_steer_torque_nm = steer_torque
+        .applied_longitudinal_tire_force_n = tire_result.total_longitudinal_force_n,
+        .applied_drive_torque_nm = tire_result.total_drive_torque_nm,
+        .applied_brake_torque_nm = tire_result.total_brake_torque_nm,
+        .applied_suspension_force_n = suspension_force,
+        .target_yaw_rate_rps = target_yaw_rate,
+        .current_yaw_rate_rps = current_yaw_rate,
+        .applied_steer_torque_nm = steer_torque,
+        .drive_layout = vehicle.drive_layout,
+        .wheel_contacts = wheel_contacts
     };
 }
 
@@ -867,6 +1001,56 @@ ocs::world::Transform visual_transform_from_body(const ocs::math::Vec3d body_pos
     transform.rotation = orientation;
     transform.scale = {scale, scale, scale};
     return transform;
+}
+
+[[nodiscard]] ocs::world::Transform wheel_transform_from_body(
+    const ocs::physics::RigidBodyState& body,
+    const ocs::math::Vec3f local_center,
+    const float steering_radians,
+    const float rolling_radians,
+    const ocs::math::Vec3f visual_center_local) noexcept {
+    const auto steer = ocs::math::Quatf::from_axis_angle({0.0F, 0.0F, 1.0F}, steering_radians);
+    const auto roll = ocs::math::Quatf::from_axis_angle({0.0F, 1.0F, 0.0F}, rolling_radians);
+    const ocs::math::Quatf wheel_orientation = (body.orientation * steer * roll).normalized();
+
+    const ocs::math::Vec3d center_world = body.position + ocs::math::Vec3d::from_vec3f(
+        body.orientation.rotate(local_center));
+    const ocs::math::Vec3d rotated_visual_center = ocs::math::Vec3d::from_vec3f(
+        wheel_orientation.rotate(visual_center_local));
+
+    ocs::world::Transform transform{};
+    transform.position = to_world_position(center_world - rotated_visual_center);
+    transform.rotation = wheel_orientation;
+    return transform;
+}
+
+void update_visual_wheels(ocs::world::World& world,
+                          VisualWheelRig& wheels,
+                          const ocs::vehicle::VehicleConfig& vehicle,
+                          const ocs::vehicle::VehicleContactState& contacts,
+                          const ocs::physics::RigidBodyState& body,
+                          const ocs::math::Vec3f wheel_visual_center,
+                          const float steering_input) noexcept {
+    const float steer = std::clamp(steering_input, -1.0F, 1.0F) *
+        VisualWheelRig::maximum_steer_radians;
+
+    for (std::size_t index = 0; index < wheels.objects.size(); ++index) {
+        if (ocs::world::WorldObject* object = world.get(wheels.objects[index]); object != nullptr) {
+            const auto& wheel_config = vehicle.wheels[index];
+            const auto& contact = contacts.wheels[index];
+            const double length = contact.suspension_length > 0.0
+                ? contact.suspension_length
+                : wheel_config.rest_length;
+            ocs::math::Vec3f wheel_center_local = wheel_config.suspension_mount_local;
+            wheel_center_local.z -= static_cast<float>(length);
+            object->transform = wheel_transform_from_body(
+                body,
+                wheel_center_local,
+                wheel_config.steerable ? steer : 0.0F,
+                static_cast<float>(-contact.wheel_rotation_radians),
+                wheel_visual_center);
+        }
+    }
 }
 
 ocs::math::Vec3f camera_relative_point(const ocs::math::Vec3d world_point,
@@ -978,6 +1162,52 @@ void append_physics_debug_draw(ocs::render::RenderScene& scene,
     }
 }
 
+void append_wheel_contact_debug_draw(
+    ocs::render::RenderScene& scene,
+    const ocs::vehicle::VehicleContactState& contacts,
+    const ocs::world::WorldPosition camera_position) {
+    using ocs::math::Vec4f;
+
+    constexpr Vec4f kContactColor{0.20F, 1.0F, 0.30F, 1.0F};
+    constexpr Vec4f kMissColor{1.0F, 0.20F, 0.20F, 1.0F};
+    constexpr Vec4f kDrivenColor{1.0F, 0.55F, 0.10F, 1.0F};
+    constexpr Vec4f kNormalColor{0.95F, 0.95F, 0.20F, 1.0F};
+    constexpr Vec4f kLongitudinalForceColor{0.20F, 0.75F, 1.0F, 1.0F};
+
+    for (const auto& wheel : contacts.wheels) {
+        const auto start = camera_relative_point(wheel.mount_world, camera_position);
+        const auto hub = camera_relative_point(wheel.wheel_center_world, camera_position);
+        const auto end_world = wheel.in_contact ? wheel.contact_point : wheel.probe_end_world;
+        const auto end = camera_relative_point(end_world, camera_position);
+        const Vec4f line_color = wheel.driven && wheel.in_contact
+            ? kDrivenColor
+            : (wheel.in_contact ? kContactColor : kMissColor);
+        scene.debug_draw.line(start, hub, line_color);
+        scene.debug_draw.line(hub, end, line_color);
+        if (wheel.in_contact) {
+            scene.debug_draw.cross(end, 0.09F, line_color);
+            const double force_scale = std::clamp(wheel.normal_force / 5000.0, 0.0, 1.5);
+            scene.debug_draw.line(
+                end,
+                camera_relative_point(
+                    wheel.contact_point + wheel.contact_normal * (0.55 + force_scale),
+                    camera_position),
+                kNormalColor);
+            if (wheel.longitudinal_direction_world.length_squared() > 1.0e-12 &&
+                std::abs(wheel.longitudinal_tire_force_n) > 1.0) {
+                const double tire_scale = std::clamp(
+                    wheel.longitudinal_tire_force_n / 3500.0, -1.5, 1.5);
+                scene.debug_draw.line(
+                    end,
+                    camera_relative_point(
+                        wheel.contact_point + wheel.longitudinal_direction_world * tire_scale,
+                        camera_position),
+                    kLongitudinalForceColor);
+            }
+        }
+    }
+}
+
 ocs::math::Vec3f quaternion_euler_degrees(const ocs::math::Quatf q_raw) noexcept {
     const ocs::math::Quatf q = q_raw.normalized();
     const float sinr_cosp = 2.0F * (q.w * q.x + q.y * q.z);
@@ -1027,7 +1257,7 @@ std::vector<std::string> build_debug_lines(
     std::vector<std::string> lines;
     lines.reserve(64);
 
-    lines.push_back("OpenCarreraSimulator - Step 8 Debug Telemetry");
+    lines.push_back("OpenCarreraSimulator - Vehicle Debug Telemetry");
     lines.push_back("============================================================");
     lines.push_back("[ENGINE]");
     lines.push_back("Frame: " + std::to_string(stats.frame_index) +
@@ -1105,7 +1335,7 @@ std::vector<std::string> build_debug_lines(
         lines.push_back(stream.str());
     }
     lines.push_back("Gravity: " + vec3d_text(physics_snapshot.gravity, 5) + " m/s^2");
-    lines.push_back("Controls: C CAMERA/OBJECT/DRIVE | V 3D debug | SPACE pause | N step | R reset");
+    lines.push_back("Controls: C CAMERA/OBJECT/DRIVE | DRIVE=chase camera | V 3D debug | SPACE pause | N step | R reset");
 
     lines.push_back("");
     lines.push_back("[DRIVE LAB CONTROLLER]");
@@ -1127,12 +1357,45 @@ std::vector<std::string> build_debug_lines(
     {
         std::ostringstream stream;
         stream << std::fixed << std::setprecision(1)
-               << "forces drive=" << drive_frame.applied_drive_force_n << " N"
-               << " brake=" << drive_frame.applied_brake_force_n << " N"
+               << "longitudinal tire Fx=" << drive_frame.applied_longitudinal_tire_force_n << " N"
+               << " driveTorque=" << drive_frame.applied_drive_torque_nm << " Nm"
+               << " brakeTorque=" << drive_frame.applied_brake_torque_nm << " Nm"
+               << " suspension=" << drive_frame.applied_suspension_force_n << " N"
                << " steerTorque=" << drive_frame.applied_steer_torque_nm << " Nm";
         lines.push_back(stream.str());
     }
-    lines.push_back("W throttle | S brake | A/D steer | Shift debug boost");
+    {
+        std::ostringstream stream;
+        stream << std::fixed << std::setprecision(3)
+               << "yaw rate target=" << drive_frame.target_yaw_rate_rps << " rad/s"
+               << " actual=" << drive_frame.current_yaw_rate_rps << " rad/s";
+        lines.push_back(stream.str());
+    }
+    lines.push_back(std::string("drivetrain=") + drive_layout_name(drive_frame.drive_layout) +
+                    " | wheelContacts=" + std::to_string(drive_frame.wheel_contacts.wheels_in_contact) + "/4" +
+                    " | drivenContacts=" + std::to_string(drive_frame.wheel_contacts.driven_wheels_in_contact) +
+                    "/" + std::to_string(drive_frame.wheel_contacts.driven_wheels));
+    for (std::size_t index = 0; index < drive_frame.wheel_contacts.wheels.size(); ++index) {
+        const auto& wheel = drive_frame.wheel_contacts.wheels[index];
+        std::ostringstream stream;
+        stream << " " << wheel_name(index)
+               << " driven=" << (wheel.driven ? "yes" : "no")
+               << " contact=" << (wheel.in_contact ? "yes" : "no");
+        if (wheel.in_contact) {
+            stream << std::fixed << std::setprecision(3)
+                   << " len=" << wheel.suspension_length << " m"
+                   << " comp=" << wheel.compression * 1000.0 << " mm"
+                   << " vel=" << wheel.compression_velocity << " m/s"
+                   << " Fz=" << wheel.normal_force << " N"
+                   << " Vx=" << wheel.longitudinal_ground_speed_mps << " m/s"
+                   << " omega=" << wheel.wheel_angular_velocity_rad_s << " rad/s"
+                   << " kappa=" << wheel.slip_ratio
+                   << " Fx=" << wheel.longitudinal_tire_force_n << " N"
+                   << " normal=" << vec3d_text(wheel.contact_normal, 2);
+        }
+        lines.push_back(stream.str());
+    }
+    lines.push_back("W throttle | S brake | A/D steer | Shift debug boost | camera=CHASE");
 
     lines.push_back("");
     lines.push_back("[CAMERA]");
@@ -1201,7 +1464,7 @@ int main(const int argc, char** argv) {
 
     ocs::platform::Window window;
     if (!window.create({
-            .title = "OpenCarreraSimulator - Step 8.11 Threaded Physics",
+            .title = "OpenCarreraSimulator - Step 9.5 Longitudinal Tire Prototype",
             .width = 1280,
             .height = 720,
             .resizable = true,
@@ -1218,10 +1481,11 @@ int main(const int argc, char** argv) {
         return 1;
     }
 
-    const auto reference_model = renderer.default_model();
+    const auto vehicle_model = renderer.default_model();
+    const auto wheel_model = renderer.load_model(config.wheel_path.string());
     const auto track_model = renderer.load_model(config.track_path.string());
-    if (!reference_model || !track_model) {
-        OCS_LOG_ERROR("Step 8.11 could not load the reference object and Blender test circuit");
+    if (!vehicle_model || !wheel_model || !track_model) {
+        OCS_LOG_ERROR("Step 9.5 could not load the vehicle body, wheel or Blender test circuit");
         renderer.shutdown();
         window.destroy();
         platform.shutdown();
@@ -1230,7 +1494,7 @@ int main(const int argc, char** argv) {
 
     const auto collision_mesh_result = ocs::assets::load_mesh(config.track_collision_path);
     if (!collision_mesh_result) {
-        OCS_LOG_ERROR("Step 8.11 could not load static collision mesh: " +
+        OCS_LOG_ERROR("Step 9.5 could not load static collision mesh: " +
                       collision_mesh_result.error().message);
         renderer.shutdown();
         window.destroy();
@@ -1240,23 +1504,68 @@ int main(const int argc, char** argv) {
     const ocs::assets::MeshData& collision_mesh = *collision_mesh_result;
     const TrackSpawn track_spawn = choose_track_spawn(collision_mesh);
 
-    const auto bounds = renderer.model_bounds(reference_model);
-    constexpr float kReferenceScale = 0.35F;
-    const ocs::math::Vec3f visual_center_local = visual_center_from_bounds(bounds, kReferenceScale);
-    const ocs::physics::BoxCollisionShape collision_box = collision_box_from_bounds(bounds, kReferenceScale);
+    const auto bounds = renderer.model_bounds(vehicle_model);
+    const auto wheel_bounds = renderer.model_bounds(wheel_model);
+    constexpr float kVehicleScale = 1.0F;
+    const ocs::math::Vec3f visual_center_local = visual_center_from_bounds(bounds, kVehicleScale);
+    const ocs::math::Vec3f wheel_visual_center = visual_center_from_bounds(wheel_bounds, 1.0F);
+
+    // Step 9.2/9.3: the OBB returns to the actual body shell. Normal ride-height
+    // support now comes from four spring/damper suspension stations; the OBB remains
+    // as chassis collision/bottom-out protection for walls, hard landings and rollover.
+    constexpr float kWheelRadius = 0.34F;
+    constexpr float kRideClearance = 0.22F;
+    constexpr double kSuspensionRestLength = 0.30;
+    constexpr double kStaticSuspensionLength = 0.22;
+    constexpr double kSuspensionCompressionTravel = 0.14;
+    constexpr double kSuspensionDroopTravel = 0.12;
+    constexpr double kSpringRate = 36000.0;
+    constexpr double kDamperRate = 4500.0;
+    ocs::physics::BoxCollisionShape collision_box = collision_box_from_bounds(bounds, kVehicleScale);
+    const float static_wheel_center_z =
+        collision_box.center_local.z - collision_box.half_extents.z - kRideClearance + kWheelRadius;
+    const float suspension_mount_z = static_wheel_center_z + static_cast<float>(kStaticSuspensionLength);
+
+    ocs::vehicle::VehicleConfig vehicle_config{};
+    vehicle_config.drive_layout = ocs::vehicle::DriveLayout::rear_wheel_drive;
+    vehicle_config.drive_acceleration = 9.0; // legacy compatibility helper only
+    vehicle_config.maximum_drive_torque_nm = 2200.0;
+    vehicle_config.maximum_brake_torque_nm_per_wheel = 1200.0;
+    vehicle_config.longitudinal_slip_reference_speed_mps = 2.0;
+    vehicle_config.maximum_steer_angle_radians = 0.42;
+    vehicle_config.provisional_max_lateral_acceleration = 8.5;
+    vehicle_config.wheels = {{
+        {.suspension_mount_local = { 1.36F,  0.79F, suspension_mount_z}, .radius = kWheelRadius, .rest_length = kSuspensionRestLength, .max_compression = kSuspensionCompressionTravel, .max_droop = kSuspensionDroopTravel, .spring_rate = kSpringRate, .damper_rate = kDamperRate, .steerable = true},
+        {.suspension_mount_local = { 1.36F, -0.79F, suspension_mount_z}, .radius = kWheelRadius, .rest_length = kSuspensionRestLength, .max_compression = kSuspensionCompressionTravel, .max_droop = kSuspensionDroopTravel, .spring_rate = kSpringRate, .damper_rate = kDamperRate, .steerable = true},
+        {.suspension_mount_local = {-1.33F,  0.79F, suspension_mount_z}, .radius = kWheelRadius, .rest_length = kSuspensionRestLength, .max_compression = kSuspensionCompressionTravel, .max_droop = kSuspensionDroopTravel, .spring_rate = kSpringRate, .damper_rate = kDamperRate, .steerable = false},
+        {.suspension_mount_local = {-1.33F, -0.79F, suspension_mount_z}, .radius = kWheelRadius, .rest_length = kSuspensionRestLength, .max_compression = kSuspensionCompressionTravel, .max_droop = kSuspensionDroopTravel, .spring_rate = kSpringRate, .damper_rate = kDamperRate, .steerable = false}
+    }};
+
+    const double support_height = static_cast<double>(
+        collision_box.half_extents.z - collision_box.center_local.z) + kRideClearance;
     const ocs::math::Vec3d initial_body_position = track_spawn.surface_point +
-        ocs::math::Vec3d{0.0, 0.0, 3.0 + static_cast<double>(collision_box.half_extents.z)};
+        ocs::math::Vec3d{0.0, 0.0, 0.05 + support_height};
     const float initial_yaw = static_cast<float>(std::atan2(track_spawn.forward.y, track_spawn.forward.x));
     const ocs::math::Quatf initial_body_orientation = ocs::math::Quatf::from_axis_angle(
         {0.0F, 0.0F, 1.0F}, initial_yaw);
     const ocs::world::Transform initial_transform = visual_transform_from_body(
-        initial_body_position, initial_body_orientation, visual_center_local, kReferenceScale);
+        initial_body_position, initial_body_orientation, visual_center_local, kVehicleScale);
 
     ocs::world::World world;
     const auto track_object = world.spawn("test_circuit", track_model, {}, false);
-    const auto movable_object = world.spawn("physics_lab_body", reference_model, initial_transform, true);
-    if (!track_object || !movable_object) {
-        OCS_LOG_ERROR("Step 8.11 failed to construct the laboratory world");
+    const auto movable_object = world.spawn("vehicle_lab_gt", vehicle_model, initial_transform, true);
+    VisualWheelRig visual_wheels{};
+    visual_wheels.objects = {{
+        world.spawn("wheel_FL", wheel_model, {}, false),
+        world.spawn("wheel_FR", wheel_model, {}, false),
+        world.spawn("wheel_RL", wheel_model, {}, false),
+        world.spawn("wheel_RR", wheel_model, {}, false)
+    }};
+    const bool wheels_valid = std::all_of(
+        visual_wheels.objects.begin(), visual_wheels.objects.end(),
+        [](const ocs::world::ObjectHandle handle) { return static_cast<bool>(handle); });
+    if (!track_object || !movable_object || !wheels_valid) {
+        OCS_LOG_ERROR("Step 9.5 failed to construct the laboratory vehicle world");
         renderer.shutdown();
         window.destroy();
         platform.shutdown();
@@ -1282,7 +1591,7 @@ int main(const int argc, char** argv) {
     body_desc.angular_damping = 0.12;
     const auto movable_body = physics_setup.create_body(body_desc);
     if (!movable_body) {
-        OCS_LOG_ERROR("Step 8 failed to create the laboratory rigid body");
+        OCS_LOG_ERROR("Step 9.5 failed to create the laboratory vehicle rigid body");
         renderer.shutdown();
         window.destroy();
         platform.shutdown();
@@ -1290,26 +1599,50 @@ int main(const int argc, char** argv) {
     }
     const std::size_t static_triangle_count = physics_setup.static_triangle_count();
     const ocs::physics::RigidBodyState initial_body_state = body_desc.state;
+    ocs::vehicle::VehicleContactState initial_wheel_contacts{};
+    if (const ocs::physics::RigidBody* body = physics_setup.get(movable_body); body != nullptr) {
+        initial_wheel_contacts = ocs::vehicle::sample_wheel_contacts(physics_setup, *body, vehicle_config);
+    }
+    update_visual_wheels(
+        world, visual_wheels, vehicle_config, initial_wheel_contacts, initial_body_state,
+        wheel_visual_center, 0.0F);
     physics_runtime.set_monitored_body(movable_body);
 
     DriveTelemetryMailbox drive_mailbox;
-    if (!physics_runtime.start([movable_body, &drive_mailbox](
+    std::atomic<std::uint64_t> vehicle_state_epoch{0U};
+    if (!physics_runtime.start([movable_body, &drive_mailbox, &vehicle_state_epoch, vehicle_config,
+                                vehicle_runtime = ocs::vehicle::VehicleRuntimeState{},
+                                observed_vehicle_state_epoch = std::uint64_t{0}](
             ocs::physics::PhysicsWorld& physics,
             const double dt,
-            const ocs::physics::PhysicsThreadInput& input) {
+            const ocs::physics::PhysicsThreadInput& input) mutable {
             DriveFrameTelemetry telemetry{};
+            telemetry.drive_layout = vehicle_config.drive_layout;
+            const std::uint64_t requested_epoch = vehicle_state_epoch.load(std::memory_order_acquire);
+            if (requested_epoch != observed_vehicle_state_epoch) {
+                vehicle_runtime = ocs::vehicle::VehicleRuntimeState{};
+                observed_vehicle_state_epoch = requested_epoch;
+            }
             if (ocs::physics::RigidBody* body = physics.get(movable_body); body != nullptr) {
                 body->dynamic = !input.object_manipulation_enabled;
                 if (input.object_manipulation_enabled) {
+                    vehicle_runtime.initialized = false;
                     (void)physics.set_pose(
                         movable_body,
                         input.object_target_position,
                         input.object_target_orientation,
                         true);
+                } else {
+                    telemetry.wheel_contacts = ocs::vehicle::update_suspension_contacts(
+                        physics, *body, vehicle_config, vehicle_runtime, dt);
+                    telemetry.applied_suspension_force_n = ocs::vehicle::apply_suspension_forces(
+                        physics, movable_body, vehicle_config, vehicle_runtime);
                 }
             }
-            if (input.drive_enabled && !input.object_manipulation_enabled) {
-                apply_drive_lab_control(physics, movable_body, input, dt, telemetry);
+            if (!input.object_manipulation_enabled) {
+                apply_drive_lab_control(
+                    physics, movable_body, vehicle_config, vehicle_runtime, input, dt, telemetry);
+                telemetry.wheel_contacts = vehicle_runtime.contacts;
             }
             if (input.apply_test_force) {
                 physics.add_force(movable_body, {0.0, 18000.0, 0.0});
@@ -1319,7 +1652,7 @@ int main(const int argc, char** argv) {
             }
             drive_mailbox.publish(telemetry);
         })) {
-        OCS_LOG_ERROR("Step 8.11 failed to start physics execution path");
+        OCS_LOG_ERROR("Step 9.5 failed to start physics execution path");
         renderer.shutdown();
         window.destroy();
         platform.shutdown();
@@ -1340,9 +1673,10 @@ int main(const int argc, char** argv) {
         OCS_LOG_WARN("Metrics CSV remains enabled, but the debug telemetry window could not be created");
     }
 
-    OCS_LOG_INFO("OpenCarreraSimulator Step 8.11.2 running | world objects " + std::to_string(world.object_count()));
+    OCS_LOG_INFO("OpenCarreraSimulator Step 9.5 running | wheel inertia + slip-ratio longitudinal tires + suspension + RWD | world objects " + std::to_string(world.object_count()));
     OCS_LOG_INFO("Static track collision: " + std::to_string(static_triangle_count) + " triangles");
-    OCS_LOG_INFO("Controls: C CAMERA/OBJECT/DRIVE | V 3D physics debug | DRIVE: W throttle, S brake, A/D steer | SPACE pause | N step | R reset");
+    OCS_LOG_INFO("Vehicle: OCS Lab GT | RWD | wheel angular inertia | load-limited longitudinal slip tires | spring/damper support | provisional bicycle yaw helper");
+    OCS_LOG_INFO("Controls: C CAMERA/OBJECT/DRIVE | DRIVE camera: CHASE | V 3D physics debug | DRIVE: W throttle, S brake, A/D steer | SPACE pause | N step | R reset");
     OCS_LOG_INFO("Physics target: " + std::to_string(config.physics_hz) + " Hz fixed step | execution: " +
                  std::string(physics_runtime.threaded()
                      ? "DEDICATED THREAD"
@@ -1361,6 +1695,7 @@ int main(const int argc, char** argv) {
         track_spawn.surface_point.x - camera.position.x));
     camera.pitch = -0.30F;
     MotionTracker camera_motion{};
+    ChaseCameraState chase_camera{};
     ControlMode control_mode = ControlMode::camera;
     ObjectManipulationTarget object_target{};
     bool physics_paused = false;
@@ -1423,12 +1758,17 @@ int main(const int argc, char** argv) {
         if (control_events.toggle_control_mode) {
             control_mode = next_control_mode(control_mode);
             if (control_mode == ControlMode::object && physics_snapshot.has_monitored_body) {
+                vehicle_state_epoch.fetch_add(1U, std::memory_order_release);
                 object_target.initialized = true;
                 object_target.position = physics_snapshot.body.current.position;
                 object_target.orientation = physics_snapshot.body.current.orientation;
             }
+            if (control_mode == ControlMode::drive) {
+                chase_camera.initialized = false;
+            }
             OCS_LOG_INFO(std::string("Control mode: ") + control_mode_name(control_mode) +
-                         (control_mode == ControlMode::object ? " (physics_lab_body, KINEMATIC)" : ""));
+                         (control_mode == ControlMode::object ? " (vehicle_lab_gt, KINEMATIC)" :
+                          control_mode == ControlMode::drive ? " (CHASE CAMERA)" : ""));
         }
         if (control_events.toggle_physics_pause) {
             physics_paused = !physics_paused;
@@ -1440,9 +1780,11 @@ int main(const int argc, char** argv) {
             OCS_LOG_INFO(physics_debug_enabled ? "3D physics debug: ON" : "3D physics debug: OFF");
         }
         if (control_events.reset_physics) {
+            vehicle_state_epoch.fetch_add(1U, std::memory_order_release);
             physics_runtime.reset(initial_body_state);
             object_target.initialized = false;
-            OCS_LOG_INFO("Physics laboratory body reset");
+            chase_camera.initialized = false;
+            OCS_LOG_INFO("Vehicle laboratory body reset");
         }
         if (control_events.single_step_physics && physics_paused) {
             physics_runtime.request_single_step();
@@ -1471,7 +1813,6 @@ int main(const int argc, char** argv) {
                 object_target.orientation = requested_rotation;
             }
         }
-        camera_motion.update(to_vec3d(camera.position), delta_seconds);
 
         ocs::physics::PhysicsThreadInput physics_input{};
         physics_input.drive_enabled = control_mode == ControlMode::drive;
@@ -1537,7 +1878,7 @@ int main(const int argc, char** argv) {
             .triangle_tests = physics_snapshot.step_stats.triangle_tests,
             .contacts = physics_snapshot.step_stats.contacts
         };
-        drive_frame = control_mode == ControlMode::drive ? drive_mailbox.read() : DriveFrameTelemetry{};
+        drive_frame = drive_mailbox.read();
 
         auto render_state = physics_runtime.render_state(physics_snapshot, render_alpha);
         if (control_mode == ControlMode::object && object_target.initialized) {
@@ -1550,12 +1891,21 @@ int main(const int argc, char** argv) {
         }
         if (ocs::world::WorldObject* object = world.get(movable_object); object != nullptr) {
             object->transform = visual_transform_from_body(
-                render_state.position, render_state.orientation, visual_center_local, kReferenceScale);
+                render_state.position, render_state.orientation, visual_center_local, kVehicleScale);
         }
+        update_visual_wheels(
+            world, visual_wheels, vehicle_config, drive_frame.wheel_contacts, render_state,
+            wheel_visual_center, control_mode == ControlMode::drive ? drive_frame.steering : 0.0F);
+
+        if (control_mode == ControlMode::drive) {
+            update_drive_chase_camera(camera, chase_camera, render_state, delta_seconds);
+        }
+        camera_motion.update(to_vec3d(camera.position), delta_seconds);
 
         ocs::render::RenderScene scene = world.extract_render_scene(camera.position);
         if (physics_debug_enabled && physics_snapshot.has_monitored_body) {
             append_physics_debug_draw(scene, physics_snapshot.body, render_state, camera.position);
+            append_wheel_contact_debug_draw(scene, drive_frame.wheel_contacts, camera.position);
         }
         if (running && !renderer.draw_frame(scene, camera.render_view())) {
             OCS_LOG_ERROR("Renderer failed while drawing a world frame");

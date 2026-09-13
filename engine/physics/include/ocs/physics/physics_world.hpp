@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <vector>
 
 #include "ocs/core/slot_map.hpp"
@@ -52,6 +53,14 @@ struct StaticTriangle {
     math::Vec3d a{};
     math::Vec3d b{};
     math::Vec3d c{};
+};
+
+
+struct StaticRaycastHit {
+    math::Vec3d point{};
+    math::Vec3d normal{0.0, 0.0, 1.0};
+    double distance = 0.0;
+    std::size_t triangle_index = 0;
 };
 
 struct RigidBodyDesc {
@@ -134,6 +143,13 @@ public:
     void set_static_triangles(std::vector<StaticTriangle> triangles);
     void clear_static_triangles() noexcept { static_triangles_.clear(); }
     [[nodiscard]] std::size_t static_triangle_count() const noexcept { return static_triangles_.size(); }
+
+    // Front-face static-mesh query used by wheel/suspension probes. Direction
+    // need not be normalized; distance is reported in world metres.
+    [[nodiscard]] std::optional<StaticRaycastHit> raycast_static(
+        math::Vec3d origin,
+        math::Vec3d direction,
+        double max_distance) const noexcept;
 
     void add_force(RigidBodyHandle handle, math::Vec3d force) noexcept;
     void add_torque(RigidBodyHandle handle, math::Vec3f torque) noexcept;

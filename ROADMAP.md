@@ -84,7 +84,7 @@ The architecture remains ready for this gate, but runtime validation is more val
 - Visual `.ocsmodel` and collision `.ocsmesh` separated from day one.
 - Spatial chunks, culling, scene files, surface metadata and timing sectors remain follow-up work.
 
-### Step 8 — Physics laboratory ← current
+### Step 8 — Physics laboratory ✅
 - Fixed-step simulation independent from rendering.
 - Configurable 500–1000 Hz physics experiments.
 - Rigid-body 6DOF, force/torque accumulation and integrator validation.
@@ -95,10 +95,18 @@ The architecture remains ready for this gate, but runtime validation is more val
 - Dedicated fixed-step physics thread is now the default, with command/input mailboxes, render snapshots and a `--single-thread-physics` A/B fallback.
 - Long-run stability/performance validation remains the final item before the physics laboratory can be considered closed.
 
-### Step 9 — First vehicle
+### Step 9 — First vehicle ← current
+- Step 9.0: original low-poly GT body + reusable wheel GLBs, four visual wheel instances and DRIVE chase camera.
+- Step 9.1: `engine/vehicle` configuration, RWD wheel layout, static-track wheel raycasts, contact-gated rear-wheel propulsion, corrected wheel ride height and sawtooth test ramp.
+- Step 9.2: persistent four-corner suspension state with mount/hub separation, bump/droop travel, compression and compression velocity.
+- Step 9.3: spring/damper support at each wheel station; chassis OBB returns to body-shell collision duty instead of normal road support.
+- Step 9.3.1: low-speed steering hotfix replaces open-loop yaw torque with a speed-coupled bicycle yaw-rate target and centred-steering yaw damping.
+- Step 9.3.2: suspension regression tolerances corrected to match float-authored geometry precision.
+- Step 9.4: persistent per-wheel angular velocity/rotation and rotational inertia.
+- Step 9.5: first load-limited longitudinal slip-ratio tire force; throttle/braking now act through wheel torque and tire contact instead of direct chassis force.
 - Wheel/contact model.
-- Basic suspension.
-- Basic tire forces: slip ratio, slip angle, normal load and combined-slip path.
+- Basic suspension. ✅ spring/damper raycast prototype complete; geometry/anti-roll refinement remains.
+- Basic tire forces: ✅ longitudinal slip/load coupling; slip angle and combined-slip path remain.
 - Steering and brakes.
 - Keyboard/gamepad controls sufficient for physics development.
 

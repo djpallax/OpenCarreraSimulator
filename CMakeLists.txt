@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(OpenCarreraSimulator
-    VERSION 0.8.11
+    VERSION 0.9.3
     DESCRIPTION "Linux-first, cross-platform racing simulator engine"
     LANGUAGES CXX
 )
@@ -33,6 +33,7 @@ add_subdirectory(engine/assets)
 add_subdirectory(engine/render)
 add_subdirectory(engine/world)
 add_subdirectory(engine/physics)
+add_subdirectory(engine/vehicle)
 add_subdirectory(tools/assetc)
 add_subdirectory(tools/trackgen)
 add_subdirectory(assets_src)

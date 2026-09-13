@@ -40,13 +40,13 @@ add_custom_command(
 
 
 
-# Step 8.8 Blender-authored physics test circuit. The same source geometry is
-# compiled into independent visual and collision runtime resources so the two
-# pipelines remain decoupled even while this laboratory asset is intentionally simple.
+# Step 9.1 physics test circuit. Visual source now includes the orange sawtooth
+# ramp while collision uses a dedicated source with only the drivable ramp face.
+# This keeps presentation and collision independently authorable.
 set(OCS_TEST_CIRCUIT_PATH "${OCS_WORLD_ASSET_OUTPUT_DIR}/test_circuit.ocsmodel"
-    CACHE INTERNAL "Step 8.8 visual physics test circuit")
+    CACHE INTERNAL "Step 9.1 visual physics test circuit + sawtooth ramp")
 set(OCS_TEST_CIRCUIT_COLLISION_PATH "${OCS_WORLD_ASSET_OUTPUT_DIR}/test_circuit_collision.ocsmesh"
-    CACHE INTERNAL "Step 8.8 static collision mesh")
+    CACHE INTERNAL "Step 9.1 static collision mesh")
 
 add_custom_command(
     OUTPUT
@@ -57,12 +57,42 @@ add_custom_command(
             "${CMAKE_CURRENT_SOURCE_DIR}/world/test_circuit.glb"
             "${OCS_TEST_CIRCUIT_PATH}"
     COMMAND $<TARGET_FILE:ocs_assetc>
-            "${CMAKE_CURRENT_SOURCE_DIR}/world/test_circuit.glb"
+            "${CMAKE_CURRENT_SOURCE_DIR}/world/test_circuit_collision.glb"
             "${OCS_TEST_CIRCUIT_COLLISION_PATH}"
     DEPENDS
         ocs_assetc
         "${CMAKE_CURRENT_SOURCE_DIR}/world/test_circuit.glb"
-    COMMENT "Compiling Step 8.8 Blender physics test circuit (visual + collision)"
+        "${CMAKE_CURRENT_SOURCE_DIR}/world/test_circuit_collision.glb"
+    COMMENT "Compiling Step 9 test circuit (visual + dedicated collision source)"
+    VERBATIM
+)
+
+
+# Step 9.0 vehicle visual prototype. Body and wheel remain independent runtime
+# resources so Step 9 suspension/steering can drive each wheel transform without
+# requiring a new source asset layout.
+set(OCS_VEHICLE_ASSET_OUTPUT_DIR "${CMAKE_BINARY_DIR}/assets/vehicle")
+set(OCS_VEHICLE_BODY_PATH "${OCS_VEHICLE_ASSET_OUTPUT_DIR}/ocs_lab_gt_body.ocsmodel"
+    CACHE INTERNAL "Step 9.0 low-poly laboratory GT body")
+set(OCS_VEHICLE_WHEEL_PATH "${OCS_VEHICLE_ASSET_OUTPUT_DIR}/ocs_lab_gt_wheel.ocsmodel"
+    CACHE INTERNAL "Step 9.0 reusable laboratory wheel")
+
+add_custom_command(
+    OUTPUT
+        "${OCS_VEHICLE_BODY_PATH}"
+        "${OCS_VEHICLE_WHEEL_PATH}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${OCS_VEHICLE_ASSET_OUTPUT_DIR}"
+    COMMAND $<TARGET_FILE:ocs_assetc>
+            "${CMAKE_CURRENT_SOURCE_DIR}/vehicle/ocs_lab_gt_body.glb"
+            "${OCS_VEHICLE_BODY_PATH}"
+    COMMAND $<TARGET_FILE:ocs_assetc>
+            "${CMAKE_CURRENT_SOURCE_DIR}/vehicle/ocs_lab_gt_wheel.glb"
+            "${OCS_VEHICLE_WHEEL_PATH}"
+    DEPENDS
+        ocs_assetc
+        "${CMAKE_CURRENT_SOURCE_DIR}/vehicle/ocs_lab_gt_body.glb"
+        "${CMAKE_CURRENT_SOURCE_DIR}/vehicle/ocs_lab_gt_wheel.glb"
+    COMMENT "Compiling Step 9.0 laboratory GT body + reusable wheel"
     VERBATIM
 )
 
@@ -73,4 +103,6 @@ add_custom_target(ocs_sample_assets ALL DEPENDS
     "${OCS_DEVELOPMENT_COLLISION_PATH}"
     "${OCS_TEST_CIRCUIT_PATH}"
     "${OCS_TEST_CIRCUIT_COLLISION_PATH}"
+    "${OCS_VEHICLE_BODY_PATH}"
+    "${OCS_VEHICLE_WHEEL_PATH}"
 )

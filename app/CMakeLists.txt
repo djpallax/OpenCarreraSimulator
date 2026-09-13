@@ -13,6 +13,7 @@ target_link_libraries(OpenCarreraSimulator
         ocs::render
         ocs::world
         ocs::physics
+        ocs::vehicle
         ocs::assets
 )
 
@@ -20,8 +21,9 @@ add_dependencies(OpenCarreraSimulator ocs_sample_assets)
 
 target_compile_definitions(OpenCarreraSimulator
     PRIVATE
-        OCS_DEFAULT_ASSET_PATH="${OCS_SAMPLE_MODEL_PATH}"
+        OCS_DEFAULT_ASSET_PATH="${OCS_VEHICLE_BODY_PATH}"
         OCS_DEVELOPMENT_TRACK_PATH="${OCS_DEVELOPMENT_TRACK_PATH}"
         OCS_TEST_CIRCUIT_PATH="${OCS_TEST_CIRCUIT_PATH}"
         OCS_TEST_CIRCUIT_COLLISION_PATH="${OCS_TEST_CIRCUIT_COLLISION_PATH}"
+        OCS_VEHICLE_WHEEL_PATH="${OCS_VEHICLE_WHEEL_PATH}"
 )

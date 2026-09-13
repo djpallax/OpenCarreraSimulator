@@ -115,6 +115,55 @@ void PhysicsWorld::set_static_triangles(std::vector<StaticTriangle> triangles) {
     }
 }
 
+std::optional<StaticRaycastHit> PhysicsWorld::raycast_static(
+    const math::Vec3d origin,
+    const math::Vec3d direction,
+    const double max_distance) const noexcept {
+    if (!(max_distance > 0.0) || !std::isfinite(max_distance)) {
+        return std::nullopt;
+    }
+
+    const double direction_length = direction.length();
+    if (!(direction_length > 1.0e-10) || !std::isfinite(direction_length)) {
+        return std::nullopt;
+    }
+    const math::Vec3d ray = direction / direction_length;
+
+    std::optional<StaticRaycastHit> closest;
+    constexpr double kParallelEpsilon = 1.0e-9;
+    for (std::size_t index = 0; index < static_triangles_.size(); ++index) {
+        const CollisionTriangle& triangle = static_triangles_[index];
+        const double denominator = ray.dot(triangle.normal);
+
+        // Static collision is one-sided. A suspension ray must approach the
+        // authored front face (+Z floor, ramp normal, inward wall normal).
+        if (denominator >= -kParallelEpsilon) {
+            continue;
+        }
+
+        const double distance = (triangle.a - origin).dot(triangle.normal) / denominator;
+        if (distance < 0.0 || distance > max_distance) {
+            continue;
+        }
+        if (closest.has_value() && distance >= closest->distance) {
+            continue;
+        }
+
+        const math::Vec3d point = origin + ray * distance;
+        if (!point_in_triangle(point, triangle)) {
+            continue;
+        }
+
+        closest = StaticRaycastHit{
+            .point = point,
+            .normal = triangle.normal,
+            .distance = distance,
+            .triangle_index = index
+        };
+    }
+    return closest;
+}
+
 void PhysicsWorld::add_force(const RigidBodyHandle handle, const math::Vec3d force) noexcept {
     if (RigidBody* body = get(handle); body != nullptr && body->dynamic) {
         body->accumulated_force += force;

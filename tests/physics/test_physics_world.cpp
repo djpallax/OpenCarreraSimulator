@@ -268,3 +268,17 @@ TEST(PhysicsWorld, RetainsContactSamplesForSpatialDebugging) {
         EXPECT_NEAR(body->debug_contacts[index].point.z, 0.0, 1.0e-3);
     }
 }
+
+TEST(PhysicsWorld, StaticRaycastHitsAuthoredFrontFace) {
+    ocs::physics::PhysicsWorld world;
+    world.set_static_triangles(flat_floor());
+
+    const auto hit = world.raycast_static({0.0, 0.0, 2.0}, {0.0, 0.0, -2.0}, 3.0);
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_NEAR(hit->distance, 2.0, 1.0e-9);
+    EXPECT_NEAR(hit->point.z, 0.0, 1.0e-9);
+    EXPECT_NEAR(hit->normal.z, 1.0, 1.0e-9);
+
+    const auto backface = world.raycast_static({0.0, 0.0, -1.0}, {0.0, 0.0, 1.0}, 3.0);
+    EXPECT_FALSE(backface.has_value());
+}

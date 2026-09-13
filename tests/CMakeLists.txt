@@ -24,6 +24,7 @@ add_executable(ocs_tests
     physics/test_fixed_step.cpp
     physics/test_physics_world.cpp
     physics/test_physics_thread.cpp
+    vehicle/test_vehicle.cpp
     render/test_debug_draw.cpp
 )
 
@@ -37,6 +38,7 @@ target_link_libraries(ocs_tests
         ocs::assets
         ocs::world
         ocs::physics
+        ocs::vehicle
         ocs::render
         GTest::gtest_main
 )
